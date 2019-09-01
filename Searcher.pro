@@ -24,4 +24,11 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
 HEADERS += \
-    mainwindow.h
+    commonheader.h \
+    mainwindow.h \
+    searchtabwidget.h \
+    settingdialog.h \
+    targetfilewidget.h
+
+RESOURCES += \
+    resources.qrc
