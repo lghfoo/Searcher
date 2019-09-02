@@ -9,6 +9,9 @@ struct SearchResultItem{
     int rowNumber;
     QString data;
 public:
+    SearchResultItem(){
+
+    }
     SearchResultItem(int _index, QString _filename, int _rowNumber, QString _data)
         :index(_index), filename(_filename), rowNumber(_rowNumber), data(_data){
 
@@ -21,21 +24,29 @@ public:
     }
 
 };
+Q_DECLARE_METATYPE(SearchResultItem)
 
-class SearchThread : public QThread{
+class SearchWorker : public QObject
+{
     Q_OBJECT
+signals:
+    void finished();
 public:
     QString keyword;
     QStandardItemModel* model;
     QStringList filter;
-    SearchThread(const QString& _keyword, QStandardItemModel* _model, const QStringList& _filter)
-        :keyword(_keyword), model(_model), filter(_filter){
+    bool isCaseSensitive = false;
+    bool isRegex = false;
+    bool isRunning = true;
+    SearchWorker(const QString& _keyword, QStandardItemModel* _model, const QStringList& _filter,
+                 bool _isCaseSensitive, bool _isRegex)
+        :keyword(_keyword), model(_model), filter(_filter),
+        isCaseSensitive(_isCaseSensitive), isRegex(_isRegex){
     }
 
-    void run()override{
+    void doWork(){
         int index = 1;
-        auto keyword = QRegularExpression(this->keyword);
-        for(int i = 0; i < model->rowCount(); i++){
+        for(int i = 0; i < model->rowCount() && isRunning; i++){
             auto item = model->item(i);
             if(item->checkState() != Qt::CheckState::Checked)continue;
             QFileInfo fileInfo(item->text());
@@ -46,23 +57,27 @@ public:
                     this->searchDirectory(fileInfo.filePath(), index, keyword);
             }
         }
+        emit finished();
         qDebug()<<"finish";
-//        renderItems();
     }
 
-    void searchDirectory(const QString& filePath, int& index, const QRegularExpression& keyword){
+    void searchDirectory(const QString& filePath, int& index, const QString& keyword){
+        if(!isRunning)return;
         QDir dir(filePath);
-        QFileInfoList fileInfos = dir.entryInfoList(filter, QDir::Filters(QDir::AllEntries | QDir::NoDotAndDotDot));
+        QFileInfoList fileInfos = dir.entryInfoList(filter, QDir::Filters(QDir::AllDirs | QDir::AllEntries | QDir::NoDotAndDotDot));
         for(auto fileInfo : fileInfos){
-            if(fileInfo.isFile())
+            if(!isRunning)return;
+            if(fileInfo.isFile()){
                 searchFile(fileInfo.filePath(), index, keyword);
-            else if(fileInfo.isDir())
+            }
+            else if(fileInfo.isDir()){
                 searchDirectory(fileInfo.filePath(), index, keyword);
+            }
         }
     }
 
-    void searchFile(const QString& filePath, int& index, const QRegularExpression& keyword){
-        qDebug()<<"search " <<filePath;
+    void searchFile(const QString& filePath, int& index, const QString& keyword){
+        if(!isRunning)return;
         QFile file(filePath);
         auto flag = file.open(QIODevice::ReadOnly | QIODevice::Text);
         if(!flag){
@@ -73,12 +88,13 @@ public:
             QTextStream stream(&file);
             stream.setCodec("utf8");
             int rowNumber = 1;
-            while(!stream.atEnd()){
+            while(!stream.atEnd() && isRunning){
                 QString line = stream.readLine();
-                if(line.contains(keyword)){
+                if(contains(line, keyword, isCaseSensitive, isRegex)){
                     auto item = SearchResultItem(index++, filePath, rowNumber, line);
 //                    resultItems.append(new SearchResultItem(index++, filePath, rowNumber, line));
                     emit renderItemSignal(item);
+                    QThread::currentThread()->msleep(20);
                 }
                 rowNumber++;
             }
@@ -86,84 +102,38 @@ public:
         file.close();
     }
 
+    bool contains(const QString& line, const QString& keyword, bool isCaseSensitive, bool isRegex){
+        if(isRegex){
+            QRegularExpression pattern(keyword);
+            if(!isCaseSensitive){
+                pattern.setPatternOptions(pattern.patternOptions() | QRegularExpression::PatternOption::CaseInsensitiveOption);
+            }
+            return line.contains(pattern);
+        }
+        else{
+            auto sensitive = Qt::CaseSensitivity::CaseSensitive;
+            if(!isCaseSensitive){
+                sensitive = Qt::CaseSensitivity::CaseInsensitive;
+            }
+            return line.contains(keyword, sensitive);
+        }
+
+    }
+
 signals:
     void renderItemSignal(const SearchResultItem& item);
-private:
+public slots:
+    void stop(){
+        this->isRunning = false;
+    }
 };
 
 class SearchTabWidget:public QWidget{
     Q_OBJECT
-public:
-    void clearResults(){
-        for(auto item : resultItems){
-            delete item;
-        }
-        resultItems.clear();
-    }
-    void renderItems(){
-        renderToTextEdit();
-    }
 
-    void renderToTable(){
-
-    }
-
-    void renderToTextEdit(){
-        auto keyword = keywordEdit->text();
-        auto pattern = QRegularExpression(keyword);
-        QString templateText = "%1\t%2\t%3:\t%4";
-        SearchSettings* settings = Searcher::searchSettings;
-        QColor colors[] = {settings->indexColor, settings->filenameColor, settings->rowNumberColor, settings->keywordColor};
-        auto highlight = [&](int begin, int end, const QColor& color, QTextCursor& cursor){
-            cursor.setPosition(begin, QTextCursor::MoveAnchor);
-            auto fmt = cursor.charFormat();
-            cursor.setPosition(end, QTextCursor::KeepAnchor);
-            fmt.setForeground(QBrush(color));
-            cursor.setCharFormat(fmt);
-        };
-        int pos = 0;
-        QTextCursor cursor(displayEdit->document());
-        auto oriCharFmt = cursor.charFormat();
-        for(auto item : resultItems){
-            QString text = templateText
-                    .arg(QString::number(item->index), item->filename, QString::number(item->rowNumber), item->data);
-            displayEdit->appendPlainText(text);
-            int indexBegin = pos;
-            int indexEnd = indexBegin + QString::number(item->index).size();
-            int filenameLastIndex = item->filename.lastIndexOf(QRegularExpression("[\\/]"));
-//            qDebug()<<filenameLastIndex;
-            int filenameBegin = indexEnd+1 + filenameLastIndex + 1;
-            int filenameEnd = filenameBegin + item->filename.size() - filenameLastIndex - 1;
-            int rowNumberBegin = filenameEnd + 1;
-            int rowNumberEnd = rowNumberBegin + QString::number(item->rowNumber).size();
-
-            auto matches = pattern.globalMatch(item->data);
-            QList<int>matchBegins({}), matchEnds({});
-            while(matches.hasNext()){
-                auto match = matches.next();
-                auto matchBegin = match.capturedStart() + rowNumberEnd + 2;
-                matchBegins.append(matchBegin);
-                matchEnds.append(matchBegin + match.capturedLength());
-            }
-            int begins[] = {indexBegin, filenameBegin, rowNumberBegin};
-            int ends[] = {indexEnd, filenameEnd, rowNumberEnd};
-            for(int i = 0; i < 3; i++){
-                highlight(begins[i], ends[i], colors[i], cursor);
-            }
-            for(int i = 0; i < matchEnds.size(); i++){
-                highlight(matchBegins[i], matchEnds[i], colors[3], cursor);
-            }
-            pos += text.size() + 1;
-        }
-        if(!resultItems.isEmpty())
-            cursor.setPosition(1, QTextCursor::MoveAnchor);
-        cursor.setCharFormat(oriCharFmt);
-    }
 public slots:
     void renderItem(const SearchResultItem& item){
-        qDebug()<<"render item";
         auto keyword = keywordEdit->text();
-        auto pattern = QRegularExpression(keyword);
         QString templateText = "%1\t%2\t%3:\t%4";
         SearchSettings* settings = Searcher::searchSettings;
         QColor colors[] = {settings->indexColor, settings->filenameColor, settings->rowNumberColor, settings->keywordColor};
@@ -191,14 +161,33 @@ public slots:
         int rowNumberBegin = filenameEnd + 1;
         int rowNumberEnd = rowNumberBegin + QString::number(item.rowNumber).size();
 
-        auto matches = pattern.globalMatch(item.data);
         QList<int>matchBegins({}), matchEnds({});
-        while(matches.hasNext()){
-            auto match = matches.next();
-            auto matchBegin = match.capturedStart() + rowNumberEnd + 2;
-            matchBegins.append(matchBegin);
-            matchEnds.append(matchBegin + match.capturedLength());
+        if(this->regexButton->isChecked()){
+            auto pattern = QRegularExpression(keyword);
+            if(!this->caseSensitiveButton->isChecked()){
+                pattern.setPatternOptions(pattern.patternOptions() | QRegularExpression::PatternOption::CaseInsensitiveOption);
+            }
+            auto matches = pattern.globalMatch(item.data);
+            while(matches.hasNext()){
+                auto match = matches.next();
+                auto matchBegin = match.capturedStart() + rowNumberEnd + 2;
+                matchBegins.append(matchBegin);
+                matchEnds.append(matchBegin + match.capturedLength());
+            }
         }
+        else{
+            Qt::CaseSensitivity sensitivity = Qt::CaseSensitivity::CaseSensitive;
+            if(!this->caseSensitiveButton->isChecked()){
+                sensitivity = Qt::CaseSensitivity::CaseInsensitive;
+            }
+            int start = 0;
+            while((start = item.data.indexOf(keyword, start, sensitivity)) != -1){
+                matchBegins.append(start + rowNumberEnd + 2);
+                matchEnds.append(start + rowNumberEnd + 2 + keyword.size());
+                start += keyword.size();
+            }
+        }
+
         int begins[] = {indexBegin, filenameBegin, rowNumberBegin};
         int ends[] = {indexEnd, filenameEnd, rowNumberEnd};
         for(int i = 0; i < 3; i++){
@@ -207,37 +196,57 @@ public slots:
         for(int i = 0; i < matchEnds.size(); i++){
             highlight(matchBegins[i], matchEnds[i], colors[3], cursor);
         }
+//        cursor.setCharFormat(oriCharFmt);
     }
-public slots:
     void search(){
-        displayEdit->clear();
-        SearchThread* thread = new SearchThread(keywordEdit->text(), model, filterEdit->text().split(';'));
-        connect(thread, &SearchThread::renderItemSignal, this, &SearchTabWidget::renderItem);
-        thread->start();
-//        thread->start(QThread::Priority::TimeCriticalPriority);
-//        searchThread();
+        if(this->searchState == IDLE){
+            displayEdit->clear();
+
+            SearchWorker* worker = new SearchWorker(keywordEdit->text(), model, filterEdit->text().split(';'),
+                                                    this->caseSensitiveButton->isChecked(), this->regexButton->isChecked());
+            QThread* searchThread = new QThread;
+            worker->moveToThread(searchThread);
+            connect(searchThread, &QThread::started, worker, &SearchWorker::doWork);
+
+            // Take care of cleaning up when finished too
+            connect(worker, &SearchWorker::finished, searchThread, &QThread::quit);
+            connect(worker, &SearchWorker::finished, worker, &SearchWorker::deleteLater);
+            connect(searchThread, &QThread::finished, searchThread, &QThread::deleteLater);
+            connect(searchThread, &QThread::finished, searchThread, [=]{
+                this->searchState = IDLE;
+                this->searchBtn->setText("Search");
+                this->searchBtn->disconnect();
+                connect(this->searchBtn, &QPushButton::clicked, this, &SearchTabWidget::search);
+            });
+            connect(worker, &SearchWorker::renderItemSignal, this, &SearchTabWidget::renderItem);
+            connect(this->searchBtn, &QPushButton::clicked, [=]{
+                this->searchBtn->disconnect();
+                this->searchState = IDLE;
+                this->searchBtn->setText("Search");
+                worker->stop();
+                worker->deleteLater();
+                connect(this->searchBtn, &QPushButton::clicked, this, &SearchTabWidget::search);
+                searchThread->quit();
+                searchThread->wait();
+                searchThread->deleteLater();
+            });
+
+            searchThread->start();
+            this->searchState = SEARCHING;
+            this->searchBtn->setText("Stop");
+        }
+        else{
+//            stopSearching();
+        }
+
     }
 
-    void searchThread(){
-        displayEdit->clear();
-        clearResults();
-        int index = 1;
-        int renderPos = 0;
-        auto keyword = QRegularExpression(keywordEdit->text());
-        for(int i = 0; i < model->rowCount(); i++){
-            auto item = model->item(i);
-            if(item->checkState() != Qt::CheckState::Checked)continue;
-            QFileInfo fileInfo(item->text());
-            if(fileInfo.exists()){
-                if(fileInfo.isFile())
-                    searchFile(fileInfo.filePath(), index, keyword, renderPos);
-                else if(fileInfo.isDir())
-                    searchDirectory(fileInfo.filePath(), index, keyword, renderPos);
-            }
+    void stopSearching(){
+        if(this->searchState == SEARCHING){
+            this->searchState = IDLE;
+            this->searchBtn->setText("Search");
+            this->searchThread->quit();
         }
-        qDebug()<<"finish";
-        qDebug()<<"total: "<<resultItems.size();
-//        renderItems();
     }
 
     void onSettingChanged(){
@@ -250,42 +259,9 @@ public slots:
 
     }
 public:
-    void searchDirectory(const QString& filePath, int& index, const QRegularExpression& keyword, int& renderPos){
-        QDir dir(filePath);
-        QStringList filter = filterEdit->text().split(';');
-        QFileInfoList fileInfos = dir.entryInfoList(filter, QDir::Filters(QDir::AllEntries | QDir::NoDotAndDotDot));
-        for(auto fileInfo : fileInfos){
-            if(fileInfo.isFile())
-                searchFile(fileInfo.filePath(), index, keyword, renderPos);
-            else if(fileInfo.isDir())
-                searchDirectory(fileInfo.filePath(), index, keyword, renderPos);
-        }
-    }
-
-    void searchFile(const QString& filePath, int& index, const QRegularExpression& keyword, int& renderPos){
-        QFile file(filePath);
-        auto flag = file.open(QIODevice::ReadOnly | QIODevice::Text);
-        if(!flag){
-            printf("open file error\n");
-            return;
-        }
-        if(file.exists()){
-            QTextStream stream(&file);
-            stream.setCodec("utf8");
-            int rowNumber = 1;
-            while(!stream.atEnd()){
-                QString line = stream.readLine();
-                if(line.contains(keyword)){
-                    auto item = SearchResultItem(index++, filePath, rowNumber, line);
-//                    resultItems.append(new SearchResultItem(index++, filePath, rowNumber, line));
-                    renderItem(item);
-                }
-                rowNumber++;
-            }
-        }
-        file.close();
-    }
-public:
+    QThread* searchThread;
+    enum SearchingState{IDLE, SEARCHING};
+    SearchingState searchState = IDLE;
     QStandardItemModel* model = new QStandardItemModel();
     QList<SearchResultItem*>resultItems;
     TargetFileWidget* targetFileWidget = new TargetFileWidget(model);
@@ -294,36 +270,38 @@ public:
     QLabel* filterLabel = new QLabel("Filter");
     QLineEdit* tabNameEdit = new QLineEdit();
     QLabel* tabNameLabel = new QLabel("Name");
-    QPushButton* searchBtn = new QPushButton("Search");
     QLabel* keywordLabel = new QLabel("Keyword");
+    QPushButton* searchBtn = new QPushButton("Search");
+    QPushButton* regexButton = new QPushButton("Regex");
+    QPushButton* caseSensitiveButton = new QPushButton("Case Sentive");
     QVBoxLayout* displayLayout = new QVBoxLayout();
     QPlainTextEdit* displayEdit = new QPlainTextEdit();
     QTableView* displayTable = new QTableView();
     QGridLayout* tabInfoLayout = new QGridLayout();
 
 public:
-    ~SearchTabWidget(){
-        this->clearResults();
-    }
-
     SearchTabWidget(){
         this->setLayout(displayLayout);
         displayLayout->addLayout(tabInfoLayout);
         tabInfoLayout->addWidget(tabNameLabel, 0, 0);
-        tabInfoLayout->addWidget(tabNameEdit, 0, 1, 1, 2);
+        tabInfoLayout->addWidget(tabNameEdit, 0, 1, 1, 4);
         tabInfoLayout->addWidget(keywordLabel, 1, 0);
         tabInfoLayout->addWidget(keywordEdit, 1, 1);
         tabInfoLayout->addWidget(searchBtn, 1, 2);
+        tabInfoLayout->addWidget(regexButton, 1, 3);
+        tabInfoLayout->addWidget(caseSensitiveButton, 1, 4);
         tabInfoLayout->addWidget(filterLabel, 2, 0);
-        tabInfoLayout->addWidget(filterEdit, 2, 1, 1, 2);
-
+        tabInfoLayout->addWidget(filterEdit, 2, 1, 1, 4);
         displayLayout->addWidget(displayEdit);
-
         displayLayout->addWidget(targetFileWidget);
-//        displayLayout->addWidget(displayTable);
+
+
         displayEdit->setReadOnly(true);
         displayEdit->setWordWrapMode(QTextOption::NoWrap);
         displayEdit->setTabStopDistance(40);
+        regexButton->setCheckable(true);
+        caseSensitiveButton->setCheckable(true);
+
         SearchSettings* settings = Searcher::searchSettings;
         QPalette palette;
         palette.setColor(QPalette::Base, settings->backgroundColor);
@@ -331,6 +309,7 @@ public:
         displayEdit->setPalette(palette);
 //        displayEdit->setFont(QFont(QFontDatabase::applicationFontFamilies(QFontDatabase::addApplicationFont(fontFile)).at(0), fontSize));
         displayEdit->setFont(settings->font);
+
         connect(searchBtn, &QPushButton::clicked, this, &SearchTabWidget::search);
         connect(keywordEdit, &QLineEdit::returnPressed, this, &SearchTabWidget::search);
         connect(tabNameEdit, &QLineEdit::textChanged, [&](const QString& name){

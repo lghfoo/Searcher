@@ -95,7 +95,7 @@ public:
     }
 
     void setupDebug(){
-        targetFilesModel->appendRow(createItem("C:/Users/35974/Documents/QtProjects/Searcher/mainwindow.h"));
+        targetFilesModel->appendRow(createItem("F:/Qt Projects/Searcher/searchtabwidget.h"));
 
         // debug log
 //        QRegularExpression pattern("abcd");
