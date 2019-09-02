@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>fonts/STXINWEI.TTF</file>
+        <file>fonts/simkai.ttf</file>
+    </qresource>
+</RCC>
