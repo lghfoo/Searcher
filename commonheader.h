@@ -35,6 +35,8 @@
 #include<QFontDialog>
 #include<QGroupBox>
 #include<QThread>
+#include<QSplitter>
+#include<QFontMetrics>
 class SearchSettings;
 
 namespace Searcher {
