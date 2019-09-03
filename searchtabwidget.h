@@ -265,7 +265,7 @@ public:
     QStandardItemModel* model = new QStandardItemModel();
     QList<SearchResultItem*>resultItems;
     TargetFileWidget* targetFileWidget = new TargetFileWidget(model);
-    QLineEdit* keywordEdit = new QLineEdit("int");
+    QLineEdit* keywordEdit = new QLineEdit("");
     QLineEdit* filterEdit = new QLineEdit("*.cs;");
     QLabel* filterLabel = new QLabel("Filter");
     QLineEdit* tabNameEdit = new QLineEdit();

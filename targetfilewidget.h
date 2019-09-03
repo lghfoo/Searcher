@@ -66,7 +66,7 @@ public:
             removeAllSelectedItem(*targetFilesListView);
         });
 
-        this->setupDebug();
+//        this->setupDebug();
     }
 
     QStandardItem* createItem(QString path){
