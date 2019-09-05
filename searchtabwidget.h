@@ -3,90 +3,7 @@
 #include"commonheader.h"
 #include"settingdialog.h"
 #include"targetfilewidget.h"
-class KeywordInfo{
-public:
-    QString keyword = "";
-    QColor highlightColor = Qt::red;
-    bool isRegex = false;
-    bool isCaseSensitive = false;
-    bool isEnable = true;
-};
-
-class KeywordInfoWidget:public QWidget{
-    Q_OBJECT
-public:
-    QHBoxLayout* mainLayout = new QHBoxLayout();
-    QLineEdit* keywordEdit = new QLineEdit();
-    ColorWidget* colorWidget = new ColorWidget();
-    QCheckBox* isRegexBox = new QCheckBox();
-    QCheckBox* isCaseSensitiveBox = new QCheckBox();
-    QCheckBox* isEnabledBox = new QCheckBox();
-    QPushButton* deleteBtn = new QPushButton();
-    KeywordInfo* keywordInfo = nullptr;
-    KeywordInfoWidget(KeywordInfo* keywordInfo = nullptr){
-        this->setLayout(mainLayout);
-        this->mainLayout->addWidget(keywordEdit);
-        this->mainLayout->addWidget(colorWidget);
-        this->mainLayout->addWidget(isRegexBox);
-        this->mainLayout->addWidget(isCaseSensitiveBox);
-        this->mainLayout->addWidget(isEnabledBox);
-        this->mainLayout->addWidget(deleteBtn);
-        if(keywordInfo)this->setData(keywordInfo);
-
-        isRegexBox->setToolTip("Use Regex");
-        isCaseSensitiveBox->setToolTip("Case Sensitive");
-        isEnabledBox->setToolTip("Enable");
-
-        auto pixmap = QPixmap(":/images/delete16.png");
-        auto icon = QIcon(pixmap);
-        deleteBtn->setIcon(icon);
-        deleteBtn->setIconSize(pixmap.rect().size());
-        deleteBtn->setStyleSheet("background-color: rgba(255, 255, 255, 0);");
-
-        colorWidget->setMaximumWidth(25);
-    }
-
-    void setData(KeywordInfo* keywordInfo){
-        if(this->keywordInfo){
-            delete this->keywordInfo;
-        }
-        this->keywordInfo = keywordInfo;
-        this->keywordEdit->setText(this->keywordInfo->keyword);
-        this->colorWidget->setColor(this->keywordInfo->highlightColor);
-        this->isRegexBox->setChecked(this->keywordInfo->isRegex);
-        this->isCaseSensitiveBox->setChecked(this->keywordInfo->isCaseSensitive);
-        this->isEnabledBox->setChecked(this->keywordInfo->isEnable);
-        connect(this->keywordEdit, &QLineEdit::textChanged, [=](const QString& text){
-            this->keywordInfo->keyword = text;
-        });
-        connect(this->keywordEdit, &QLineEdit::returnPressed, this, &KeywordInfoWidget::returnPressed);
-        connect(this->colorWidget, &ColorWidget::colorChanged, [=](const QColor& color){
-            this->keywordInfo->highlightColor = color;
-        });
-        connect(this->isRegexBox, &QCheckBox::stateChanged, [=]{
-            this->keywordInfo->isRegex = this->isRegexBox->isChecked();
-        });
-        connect(this->isCaseSensitiveBox, &QCheckBox::stateChanged, [=]{
-            this->keywordInfo->isCaseSensitive = this->isCaseSensitiveBox->isChecked();
-        });
-        connect(this->isEnabledBox, &QCheckBox::stateChanged, [=]{
-           this->keywordInfo->isEnable = this->isEnabledBox->isChecked();
-        });
-        connect(this->deleteBtn, &QPushButton::clicked, this, &KeywordInfoWidget::beDeleted);
-
-    }
-    KeywordInfo* getData(){
-        return this->keywordInfo;
-    }
-    ~KeywordInfoWidget(){
-        delete keywordInfo;
-        keywordInfo = nullptr;
-    }
-signals:
-    void beDeleted();
-    void returnPressed();
-};
-
+#include"keywordinfolistview.h"
 struct SearchResultItem{
     int index;
     QString filename;
@@ -184,28 +101,37 @@ public:
     }
 
     bool isMatch(const QString& line){
+        auto dismatch = [&](const QList<KeywordInfo*> keywords, bool condition){
+            for(auto keyword : keywords){
+                if((!keyword->isEnable) || keyword->keyword.isEmpty())continue;
+                bool isRegex = keyword->isRegex;
+                bool isCaseSensitive= keyword->isCaseSensitive;
+                if(isRegex){
+                    QRegularExpression pattern(keyword->keyword);
+                    if(!isCaseSensitive){
+                        pattern.setPatternOptions(pattern.patternOptions() | QRegularExpression::PatternOption::CaseInsensitiveOption);
+                    }
+                    if(line.contains(pattern) == condition)return true;
+                }
+                else{
+                    auto sensitive = Qt::CaseSensitivity::CaseSensitive;
+                    if(!isCaseSensitive){
+                        sensitive = Qt::CaseSensitivity::CaseInsensitive;
+                    }
+                    if(line.contains(keyword->keyword, sensitive) == condition)return true;
+                }
+            }
+            return false;
+        };
+
+        // not keywords
+        if(dismatch(notKeywords, true))return false;
         // and keywords
-        for(auto andKeyword : andKeywords){
-            if((!andKeyword->isEnable) || andKeyword->keyword.isEmpty())continue;
-            bool isRegex = andKeyword->isRegex;
-            bool isCaseSensitive= andKeyword->isCaseSensitive;
-            if(isRegex){
-                QRegularExpression pattern(andKeyword->keyword);
-                if(!isCaseSensitive){
-                    pattern.setPatternOptions(pattern.patternOptions() | QRegularExpression::PatternOption::CaseInsensitiveOption);
-                }
-                if(!line.contains(pattern))return false;
-            }
-            else{
-                auto sensitive = Qt::CaseSensitivity::CaseSensitive;
-                if(!isCaseSensitive){
-                    sensitive = Qt::CaseSensitivity::CaseInsensitive;
-                }
-                if(!line.contains(andKeyword->keyword, sensitive))return false;
-            }
-        }
+        if(dismatch(andKeywords, false))return false;
         return true;
     }
+
+
 
 signals:
     void renderItemSignal(const SearchResultItem& item);
@@ -251,8 +177,9 @@ public slots:
         for(int i = 0; i < 3; i++){
             highlight(begins[i], ends[i], colors[i], cursor);
         }
-
-        for(auto keywordInfo : andKeywordInfos){
+        QList<KeywordInfo*> keywordInfos = this->andKeywordListView->getData();
+        keywordInfos.append(this->highlightKeywordListView->getData());
+        for(auto keywordInfo : keywordInfos){
             if((!keywordInfo->isEnable) || keywordInfo->keyword.isEmpty())continue;
             if(keywordInfo->isRegex){
                 auto pattern = QRegularExpression(keywordInfo->keyword);
@@ -287,7 +214,7 @@ public slots:
             displayEdit->clear();
 
             SearchWorker* worker = new SearchWorker(model, filterEdit->text().split(';'),
-                                                    this->andKeywordInfos, this->notKeywordInfos);
+                                                    this->andKeywordListView->getData(), this->notKeywordListView->getData());
             QThread* searchThread = new QThread;
             worker->moveToThread(searchThread);
             connect(searchThread, &QThread::started, worker, &SearchWorker::doWork);
@@ -364,18 +291,11 @@ public:
     QLabel* filterLabel = new QLabel("Filter");
     QLineEdit* filterEdit = new QLineEdit("*.cs;");
 
-    // and group
-    QGroupBox* andKeywordGroup = new QGroupBox("And Key");
-    QVBoxLayout* andKeywordGroupLayout = new QVBoxLayout();
-    QPushButton* addAndKeywordBtn = new QPushButton("+");
-    QList<KeywordInfo*>andKeywordInfos;
+    // keywords
+    KeywordInfoListView* andKeywordListView = new KeywordInfoListView("And Keywords");
+    KeywordInfoListView* notKeywordListView = new KeywordInfoListView("Not Keywords");
+    KeywordInfoListView* highlightKeywordListView = new KeywordInfoListView("Highlight Keywords");
 
-
-    // not group
-    QGroupBox* notKeywordGroup = new QGroupBox("Not Key");
-    QVBoxLayout* notKeywordGroupLayout = new QVBoxLayout();
-    QPushButton* addNotKeywordBtn = new QPushButton("+");
-    QList<KeywordInfo*>notKeywordInfos;
 
 public:
     SearchTabWidget(){
@@ -392,7 +312,7 @@ public:
         displaySplitter->addWidget(displayEdit);
         displaySplitter->addWidget(tabInfoWidget);
         displaySplitter->setOrientation(Qt::Horizontal);
-        displaySplitter->setStretchFactor(displaySplitter->indexOf(displayEdit), 4);
+        displaySplitter->setStretchFactor(displaySplitter->indexOf(displayEdit), 5);
         displaySplitter->setStretchFactor(displaySplitter->indexOf(tabInfoWidget), 1);
 
         // tab info
@@ -405,30 +325,16 @@ public:
         tabInfoLayout->addWidget(filterLabel, 1, 0);
         tabInfoLayout->addWidget(filterEdit, 1, 1);
         // and group
-        tabInfoLayout->addWidget(andKeywordGroup, 2, 0, 1, 2);
-        andKeywordGroup->setLayout(andKeywordGroupLayout);
-        andKeywordGroupLayout->addWidget(addAndKeywordBtn);
-        connect(this->addAndKeywordBtn, &QPushButton::clicked, [=]{
-            auto keywordInfo = new KeywordInfo();
-            andKeywordInfos.append(keywordInfo);
-            auto keywordInfoWidget = new KeywordInfoWidget(keywordInfo);
-            andKeywordGroupLayout->addWidget(keywordInfoWidget);
-            connect(keywordInfoWidget, &KeywordInfoWidget::returnPressed, this, &SearchTabWidget::search);
-            connect(keywordInfoWidget, &KeywordInfoWidget::beDeleted, [=]{
-                andKeywordGroupLayout->removeWidget(keywordInfoWidget);
-                andKeywordInfos.removeOne(keywordInfoWidget->getData());
-                delete keywordInfoWidget;
-            });
-        });
-        // not group
-        tabInfoLayout->addWidget(notKeywordGroup, 3, 0, 1, 2);
-        notKeywordGroup->setLayout(notKeywordGroupLayout);
-        notKeywordGroupLayout->addWidget(addNotKeywordBtn);
-        connect(this->addNotKeywordBtn, &QPushButton::clicked, [=]{
+        tabInfoLayout->addWidget(andKeywordListView, 2, 0, 1, 2);
+        andKeywordListView->addKeywordInfo(new KeywordInfo());
+        connect(andKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
+        tabInfoLayout->addWidget(notKeywordListView, 3, 0, 1, 2);
+        connect(notKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
+        tabInfoLayout->addWidget(highlightKeywordListView, 4, 0, 1, 2);
+        connect(highlightKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
 
-        });
         // search
-        tabInfoLayout->addWidget(searchBtn, 4, 0, 1, 2);
+        tabInfoLayout->addWidget(searchBtn, 5, 0, 1, 2);
 
         displayEdit->setReadOnly(true);
         displayEdit->setWordWrapMode(QTextOption::NoWrap);

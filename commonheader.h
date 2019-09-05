@@ -37,6 +37,7 @@
 #include<QThread>
 #include<QSplitter>
 #include<QFontMetrics>
+#include<QScrollArea>
 class SearchSettings;
 
 namespace Searcher {

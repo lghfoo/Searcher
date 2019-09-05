@@ -25,10 +25,12 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 HEADERS += \
     commonheader.h \
+    keywordinfolistview.h \
     mainwindow.h \
     searchtabwidget.h \
     settingdialog.h \
-    targetfilewidget.h
+    targetfilewidget.h \
+    util.h
 
 RESOURCES += \
     resources.qrc
