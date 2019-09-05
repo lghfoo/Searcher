@@ -63,7 +63,7 @@ public:
     void searchDirectory(const QString& filePath, int& index){
         if(!isRunning)return;
         QDir dir(filePath);
-        QFileInfoList fileInfos = dir.entryInfoList(filter, QDir::Filters(QDir::AllDirs | QDir::AllEntries | QDir::NoDotAndDotDot));
+        QFileInfoList fileInfos = dir.entryInfoList(filter.isEmpty()? QStringList()<<"*.*" : filter, QDir::Filters(QDir::AllDirs | QDir::AllEntries | QDir::NoDotAndDotDot));
         for(auto fileInfo : fileInfos){
             if(!isRunning)return;
             if(fileInfo.isFile()){
@@ -213,7 +213,7 @@ public slots:
         if(this->searchState == IDLE){
             displayEdit->clear();
 
-            SearchWorker* worker = new SearchWorker(model, filterEdit->text().split(';'),
+            SearchWorker* worker = new SearchWorker(model, filterEdit->text().split(';', QString::SplitBehavior::SkipEmptyParts),
                                                     this->andKeywordListView->getData(), this->notKeywordListView->getData());
             QThread* searchThread = new QThread;
             worker->moveToThread(searchThread);
