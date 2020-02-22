@@ -37,10 +37,11 @@ public:
     QList<KeywordInfo*>notKeywords;
     QStandardItemModel* model;
     QStringList filter;
+    QStringList not_filter;
     bool isRunning = true;
-    SearchWorker(QStandardItemModel* _model, const QStringList& _filter,
+    SearchWorker(QStandardItemModel* _model, const QStringList& _filter, const QStringList& _not_filter,
                  const QList<KeywordInfo*>& _andKeywords, const QList<KeywordInfo*>& _notKeywords)
-        :model(_model), filter(_filter), andKeywords(_andKeywords), notKeywords(_notKeywords){
+        :model(_model), filter(_filter), not_filter(_not_filter), andKeywords(_andKeywords), notKeywords(_notKeywords){
     }
 
     void doWork(){
@@ -66,6 +67,14 @@ public:
         QFileInfoList fileInfos = dir.entryInfoList(filter.isEmpty()? QStringList()<<"*.*" : filter, QDir::Filters(QDir::AllDirs | QDir::AllEntries | QDir::NoDotAndDotDot));
         for(auto fileInfo : fileInfos){
             if(!isRunning)return;
+            bool flag = false;
+            for(auto n : not_filter){
+                if(fileInfo.fileName().contains(n)){
+                    flag = true;
+                    break;
+                }
+            }
+            if(flag)continue;
             if(fileInfo.isFile()){
                 searchFile(fileInfo.filePath(), index);
             }
@@ -77,6 +86,7 @@ public:
 
     void searchFile(const QString& filePath, int& index){
         if(!isRunning)return;
+        printf("search %s\n", filePath.toStdString().c_str());
         QFile file(filePath);
         auto flag = file.open(QIODevice::ReadOnly | QIODevice::Text);
         if(!flag){
@@ -214,6 +224,7 @@ public slots:
             displayEdit->clear();
 
             SearchWorker* worker = new SearchWorker(model, filterEdit->text().split(';', QString::SplitBehavior::SkipEmptyParts),
+                                                    not_filterEdit->text().split(';', QString::SplitBehavior::SkipEmptyParts),
                                                     this->andKeywordListView->getData(), this->notKeywordListView->getData());
             QThread* searchThread = new QThread;
             worker->moveToThread(searchThread);
@@ -290,6 +301,8 @@ public:
     QLineEdit* tabNameEdit = new QLineEdit();
     QLabel* filterLabel = new QLabel("Filter");
     QLineEdit* filterEdit = new QLineEdit("*.cs;");
+    QLabel* not_filter_lable = new QLabel("Excluse");
+    QLineEdit* not_filterEdit = new QLineEdit(".dll;.lib;.7z;.exe;.tgz;.meta;.unity;");
 
     // keywords
     KeywordInfoListView* andKeywordListView = new KeywordInfoListView("And Keywords");
@@ -324,17 +337,19 @@ public:
         // filter
         tabInfoLayout->addWidget(filterLabel, 1, 0);
         tabInfoLayout->addWidget(filterEdit, 1, 1);
+        tabInfoLayout->addWidget(not_filter_lable, 2, 0);
+        tabInfoLayout->addWidget(not_filterEdit, 2, 1);
         // and group
-        tabInfoLayout->addWidget(andKeywordListView, 2, 0, 1, 2);
+        tabInfoLayout->addWidget(andKeywordListView, 3, 0, 1, 2);
         andKeywordListView->addKeywordInfo(new KeywordInfo());
         connect(andKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
-        tabInfoLayout->addWidget(notKeywordListView, 3, 0, 1, 2);
+        tabInfoLayout->addWidget(notKeywordListView, 4, 0, 1, 2);
         connect(notKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
-        tabInfoLayout->addWidget(highlightKeywordListView, 4, 0, 1, 2);
+        tabInfoLayout->addWidget(highlightKeywordListView, 5, 0, 1, 2);
         connect(highlightKeywordListView, &KeywordInfoListView::returnPressed, this, &SearchTabWidget::search);
 
         // search
-        tabInfoLayout->addWidget(searchBtn, 5, 0, 1, 2);
+        tabInfoLayout->addWidget(searchBtn, 6, 0, 1, 2);
 
         displayEdit->setReadOnly(true);
         displayEdit->setWordWrapMode(QTextOption::NoWrap);
